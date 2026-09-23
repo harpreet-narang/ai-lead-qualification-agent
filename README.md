@@ -244,14 +244,13 @@ Before this project is marked as tested, the workflow will be run against a smal
 
 Execution screenshots and results will be added after validation.
 
-## Acknowledgements
+## Project background
 
-The architecture was informed by public n8n lead-scoring and routing examples, including:
+This repository is a **public portfolio implementation of business-automation patterns I use in private workflow projects**.
 
-- Stevenshanmukh/n8n-ai-automation — Lead Scoring & Intelligent Routing
-- tabii-dev/n8n-Portfolio — AI Lead Qualification System
+The public version was built from scratch with fictional lead data, an explicit scoring model, AI-assisted intent assessment, routing logic, and human-review controls so the system can be demonstrated without exposing any private client or production implementation.
 
-This repository is an independent portfolio implementation with its own scoring model, workflow structure, prompts, sample data, and documentation.
+The scoring model, workflow structure, prompts, examples, and documentation in this repository were created specifically for this portfolio project.
 
 ## License
 
