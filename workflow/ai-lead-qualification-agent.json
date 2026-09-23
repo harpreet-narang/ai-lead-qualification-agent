@@ -1,0 +1,469 @@
+{
+  "name": "AI Lead Qualification Agent - Portfolio Demo",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-qualification",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "lead-webhook",
+      "name": "Lead Intake Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $json.body ?? $json;\nconst personalDomains = ['gmail.com','yahoo.com','outlook.com','hotmail.com','icloud.com','proton.me','protonmail.com'];\nconst email = String(src.email ?? '').trim().toLowerCase();\nconst domain = email.includes('@') ? email.split('@').pop() : '';\n\nconst companySize = Number(src.company_size ?? 0) || 0;\nconst budgetText = String(src.budget_range ?? '').toLowerCase();\nconst budgetNums = budgetText.match(/\\d+/g)?.map(Number) ?? [];\nconst budgetMin = budgetNums.length ? Math.min(...budgetNums) : 0;\n\nconst timelineText = String(src.timeline ?? '').toLowerCase();\nlet timelineDays = 999;\nif (/0\\s*-\\s*30|30\\s*days|1\\s*month/.test(timelineText)) timelineDays = 30;\nelse if (/30\\s*-\\s*60|60\\s*days|2\\s*months?/.test(timelineText)) timelineDays = 60;\nelse if (/60\\s*-\\s*90|90\\s*days|3\\s*months?/.test(timelineText)) timelineDays = 90;\nelse if (/180|6\\s*months?/.test(timelineText)) timelineDays = 180;\n\nconst normalized = {\n  first_name: String(src.first_name ?? '').trim(),\n  last_name: String(src.last_name ?? '').trim(),\n  email,\n  company: String(src.company ?? '').trim(),\n  job_title: String(src.job_title ?? '').trim(),\n  company_size: companySize,\n  budget_range: String(src.budget_range ?? '').trim(),\n  budget_min: budgetMin,\n  timeline: String(src.timeline ?? '').trim(),\n  timeline_days: timelineDays,\n  message: String(src.message ?? '').trim(),\n  source: String(src.source ?? 'unknown').trim().toLowerCase(),\n  is_business_email: Boolean(domain) && !personalDomains.includes(domain)\n};\n\nnormalized.validation_errors = [];\nif (!normalized.email || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(normalized.email)) normalized.validation_errors.push('valid email is required');\nif (!normalized.message) normalized.validation_errors.push('message is required');\nnormalized.valid = normalized.validation_errors.length === 0;\n\nreturn [{ json: normalized }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "normalize-lead",
+      "name": "Normalize Lead"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "valid-if",
+      "name": "Valid Lead?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $json;\nlet score = 0;\nconst breakdown = {};\n\nconst title = lead.job_title.toLowerCase();\nif (/(founder|owner|chief|ceo|cto|cmo|coo|vp|vice president|head|director)/.test(title)) breakdown.role = 15;\nelse if (/(manager|lead)/.test(title)) breakdown.role = 10;\nelse if (title) breakdown.role = 5;\nelse breakdown.role = 0;\nscore += breakdown.role;\n\nif (lead.company_size >= 20 && lead.company_size <= 500) breakdown.company_size = 15;\nelse if ((lead.company_size >= 5 && lead.company_size < 20) || (lead.company_size > 500 && lead.company_size <= 1000)) breakdown.company_size = 8;\nelse breakdown.company_size = 0;\nscore += breakdown.company_size;\n\nbreakdown.business_email = lead.is_business_email ? 10 : 0;\nscore += breakdown.business_email;\n\nif (lead.budget_min >= 5000) breakdown.budget = 15;\nelse if (lead.budget_min >= 2500) breakdown.budget = 10;\nelse if (lead.budget_min >= 1000) breakdown.budget = 5;\nelse breakdown.budget = 0;\nscore += breakdown.budget;\n\nif (lead.timeline_days <= 30) breakdown.timeline = 15;\nelse if (lead.timeline_days <= 90) breakdown.timeline = 12;\nelse if (lead.timeline_days <= 180) breakdown.timeline = 6;\nelse breakdown.timeline = 0;\nscore += breakdown.timeline;\n\nif (/(demo|consult|sales)/.test(lead.source)) breakdown.source = 10;\nelse if (/(website|form|inbound)/.test(lead.source)) breakdown.source = 6;\nelse breakdown.source = 2;\nscore += breakdown.source;\n\nreturn [{ json: { ...lead, deterministic_score: Math.min(score, 80), deterministic_breakdown: breakdown } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -96
+      ],
+      "id": "deterministic-score",
+      "name": "Deterministic Score"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Assess this inbound lead only for semantic fit and intent.\\n\\nCompany: {{ $json.company }}\\nRole: {{ $json.job_title }}\\nMessage: {{ $json.message }}\\nTimeline: {{ $json.timeline }}\\nSource: {{ $json.source }}\\n\\nReturn a fit_score from 0 to 20. Judge problem clarity, urgency, fit for AI/automation services, and buying intent. Do not re-score company size, email type, role seniority, or budget because those are handled separately. Keep the explanation concise.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a B2B lead qualification analyst. Be conservative. A vague inquiry should not receive a high score. Output only the requested structured result."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.6,
+      "position": [
+        944,
+        -96
+      ],
+      "id": "ai-fit",
+      "name": "AI Fit Assessment"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        944,
+        224
+      ],
+      "id": "chat-model",
+      "name": "Chat Model"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\\n  \"fit_score\": 16,\\n  \"problem_clarity\": \"high\",\\n  \"urgency\": \"medium\",\\n  \"intent_strength\": \"high\",\\n  \"summary\": \"Clear automation requirement with a near-term implementation timeline.\"\\n}",
+        "autoFix": true
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1120,
+        224
+      ],
+      "id": "fit-parser",
+      "name": "Fit Output Parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Deterministic Score').first().json;\nconst incoming = $json.output && typeof $json.output === 'object' ? $json.output : $json;\nconst aiScore = Math.max(0, Math.min(20, Number(incoming.fit_score ?? incoming.output?.fit_score ?? 0) || 0));\nconst finalScore = Math.max(0, Math.min(100, base.deterministic_score + aiScore));\n\nlet tier = 'LOW';\nif (finalScore >= 80) tier = 'HOT';\nelse if (finalScore >= 60) tier = 'WARM';\nelse if (finalScore >= 40) tier = 'NURTURE';\n\nconst recommendedAction = tier === 'HOT'\n  ? 'Immediate sales review and follow-up draft'\n  : tier === 'WARM'\n  ? 'Sales follow-up queue and follow-up draft'\n  : tier === 'NURTURE'\n  ? 'Add to nurture workflow'\n  : 'Log for later review';\n\nreturn [{ json: {\n  ...base,\n  ai_fit_score: aiScore,\n  ai_assessment: incoming,\n  lead_score: finalScore,\n  tier,\n  recommended_action: recommendedAction,\n  needs_followup_draft: ['HOT','WARM'].includes(tier)\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -96
+      ],
+      "id": "combine-score",
+      "name": "Combine Score + Tier"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "followup-check",
+              "leftValue": "={{ $json.needs_followup_draft }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        -96
+      ],
+      "id": "followup-if",
+      "name": "Needs Follow-up Draft?"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write a short first-touch B2B follow-up draft for this qualified inbound lead.\\n\\nName: {{ $json.first_name }}\\nCompany: {{ $json.company }}\\nRole: {{ $json.job_title }}\\nTheir message: {{ $json.message }}\\nLead tier: {{ $json.tier }}\\nScore: {{ $json.lead_score }}/100\\n\\nRules: acknowledge their stated need, do not invent company research, keep it under 120 words, and end with one simple next-step question. This is a draft for human approval, not an automatically sent email.",
+        "options": {
+          "systemMessage": "You write concise, natural B2B follow-up drafts. Avoid hype, fake personalization, and unsupported claims."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.6,
+      "position": [
+        1680,
+        -192
+      ],
+      "id": "followup-draft",
+      "name": "Generate Follow-up Draft"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Combine Score + Tier').first().json;\nconst draft = typeof $json.output === 'string' ? $json.output : ($json.text ?? $json.response ?? JSON.stringify($json.output ?? ''));\nreturn [{ json: {\n  ...lead,\n  followup_draft: draft,\n  approval_status: 'pending_human_approval'\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        -192
+      ],
+      "id": "mark-approval",
+      "name": "Mark Pending Human Approval"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$json, followup_draft: null, approval_status: 'not_required' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        64
+      ],
+      "id": "mark-no-approval",
+      "name": "Mark No Approval Required"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL + '/rest/v1/portfolio_leads' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ first_name: $json.first_name, last_name: $json.last_name, email: $json.email, company: $json.company, job_title: $json.job_title, company_size: $json.company_size || null, budget_range: $json.budget_range || null, timeline: $json.timeline || null, source: $json.source || null, message: $json.message, deterministic_score: $json.deterministic_score, ai_fit_score: $json.ai_fit_score, lead_score: $json.lead_score, tier: $json.tier, ai_summary: $json.ai_assessment?.summary || null, recommended_action: $json.recommended_action, approval_status: $json.approval_status }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        -64
+      ],
+      "id": "persist-lead",
+      "name": "Persist to Supabase (Optional)",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { email: $json.email, lead_score: $json.lead_score, tier: $json.tier, deterministic_score: $json.deterministic_score, ai_fit_score: $json.ai_fit_score, reasoning: $json.ai_assessment?.summary || '', recommended_action: $json.recommended_action, approval_status: $json.approval_status, followup_draft: $json.followup_draft || null } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2400,
+        -64
+      ],
+      "id": "respond-qualified",
+      "name": "Return Qualification Result"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'invalid_lead', details: $json.validation_errors } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        688,
+        128
+      ],
+      "id": "respond-invalid",
+      "name": "Return Validation Error"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Lead Intake Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead": {
+      "main": [
+        [
+          {
+            "node": "Valid Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Lead?": {
+      "main": [
+        [
+          {
+            "node": "Deterministic Score",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deterministic Score": {
+      "main": [
+        [
+          {
+            "node": "AI Fit Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Fit Assessment",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Generate Follow-up Draft",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fit Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Fit Assessment",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Fit Assessment": {
+      "main": [
+        [
+          {
+            "node": "Combine Score + Tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Score + Tier": {
+      "main": [
+        [
+          {
+            "node": "Needs Follow-up Draft?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Follow-up Draft?": {
+      "main": [
+        [
+          {
+            "node": "Generate Follow-up Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark No Approval Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Follow-up Draft": {
+      "main": [
+        [
+          {
+            "node": "Mark Pending Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Pending Human Approval": {
+      "main": [
+        [
+          {
+            "node": "Persist to Supabase (Optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark No Approval Required": {
+      "main": [
+        [
+          {
+            "node": "Persist to Supabase (Optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist to Supabase (Optional)": {
+      "main": [
+        [
+          {
+            "node": "Return Qualification Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "portfolio-lead-qualification-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
